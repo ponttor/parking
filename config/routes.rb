@@ -2,6 +2,6 @@
 
 Rails.application.routes.draw do
   namespace :api do
-    resources :tickets, only: :create
+    resources :tickets, only: %i[show create]
   end
 end
