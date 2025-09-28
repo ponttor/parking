@@ -6,7 +6,9 @@ Rails.application.routes.draw do
       member do
         post :payments
         get  :state
+        post :use
       end
     end
+    get 'free-spaces', to: 'parking#free_spaces'
   end
 end

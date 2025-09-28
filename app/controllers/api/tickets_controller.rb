@@ -3,45 +3,37 @@
 class Api::TicketsController < ApplicationController
   def show
     ticket = Ticket.find_by!(barcode: params[:barcode])
-
     render json: ticket, serializer: TicketPriceSerializer, status: :ok
-  rescue ActiveRecord::RecordNotFound
-    render json: { error: 'ticket not found' }, status: :not_found
   end
 
   def create
-    ticket = TicketService.create
-
-    if ticket.save
-      render json: ticket, serializer: TicketSerializer, status: :created
-    else
-      render json: { errors: ticket.errors.to_hash(true) }, status: :unprocessable_entity
-    end
+    ticket = TicketIssuanceService.call
+    render json: ticket, serializer: TicketSerializer, status: :created
   end
 
   def payments
     ticket = Ticket.find_by!(barcode: params[:barcode])
-
-    unless ticket.can_take_payment?
-      return render json: { error: 'invalid state', state: ticket.state }, status: :unprocessable_entity
-    end
+    return render json: { error: 'invalid state', state: ticket.state }, status: :unprocessable_entity unless ticket.can_take_payment?
 
     result = process_payment!(ticket, pay_params[:payment_option])
-
-    render json: ticket,
-           serializer: TicketPaymentSerializer,
-           charged_price: result[:charged_price],
-           status: :ok
-  rescue ActiveRecord::RecordNotFound
-    render json: { error: 'ticket not found' }, status: :not_found
+    render json: ticket, serializer: TicketPaymentSerializer, charged_price: result[:charged_price], status: :ok
   end
 
   def state
     ticket = Ticket.find_by!(barcode: params[:barcode])
-
     render json: { state: ticket.gate_state(now: Time.current) }, status: :ok
-  rescue ActiveRecord::RecordNotFound
-    render json: { error: 'ticket not found' }, status: :not_found
+  end
+
+  def use
+    ticket = Ticket.find_by!(barcode: params[:barcode])
+
+    return render json: ticket, serializer: TicketUseSerializer, status: :ok if ticket.used?
+    return render json: { error: 'invalid state', state: ticket.state }, status: :unprocessable_entity unless ticket.paid?
+    return render json: { error: 'grace expired', state: ticket.state }, status: :unprocessable_entity if Time.current > ticket.valid_until
+
+    ticket.use!
+
+    render json: ticket, serializer: TicketUseSerializer, status: :ok
   end
 
   private
@@ -51,8 +43,7 @@ class Api::TicketsController < ApplicationController
   end
 
   def process_payment!(ticket, option)
-    now    = Time.current
-    charge = TicketPriceService.call(ticket, now: now)[:price_eur]
+    charge = TicketPriceService.call(ticket, now: Time.current)[:price_eur]
 
     ticket.payment_grace_expired? ? ticket.repay!(option) : ticket.pay!(option)
 

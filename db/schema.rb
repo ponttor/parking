@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_09_27_163250) do
+ActiveRecord::Schema[7.2].define(version: 2025_09_28_114519) do
   create_table "tickets", force: :cascade do |t|
     t.string "barcode", limit: 16, null: false
     t.datetime "issued_at", null: false
@@ -19,8 +19,10 @@ ActiveRecord::Schema[7.2].define(version: 2025_09_27_163250) do
     t.string "state", default: "unpaid", null: false
     t.datetime "paid_at"
     t.string "payment_option"
+    t.datetime "used_at"
     t.index ["barcode"], name: "index_tickets_on_barcode", unique: true
     t.index ["paid_at"], name: "index_tickets_on_paid_at"
     t.index ["state"], name: "index_tickets_on_state"
+    t.index ["used_at"], name: "index_tickets_on_used_at"
   end
 end

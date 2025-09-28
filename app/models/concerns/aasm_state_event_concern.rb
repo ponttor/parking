@@ -18,7 +18,8 @@ module AasmStateEventConcern
 
       event :use do
         transitions from: :paid, to: :used,
-                    guard: :within_grace?
+                    guard: :within_grace?,
+                    after: :after_use
       end
     end
   end
@@ -32,5 +33,9 @@ module AasmStateEventConcern
 
   def within_grace?
     paid_at.present? && Time.current <= valid_until
+  end
+
+  def after_use
+    self.used_at = Time.current
   end
 end

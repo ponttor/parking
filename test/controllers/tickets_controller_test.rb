@@ -220,7 +220,143 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
     assert_equal 'ticket not found', response.parsed_body['error']
   end
 
+  def test_use_success_within_grace
+    freeze_time do
+      t = issue
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'card' } }, as: :json
+      assert_response :ok
+
+      travel 10.minutes
+      post "/api/tickets/#{t.barcode}/use", as: :json
+      assert_response :ok
+
+      body = response.parsed_body
+      assert_equal 'used', body['state']
+      assert_equal Time.current.utc.iso8601(0), body['used_at']
+    end
+  end
+
+  def test_use_unpaid_invalid
+    freeze_time do
+      t = issue
+      post "/api/tickets/#{t.barcode}/use", as: :json
+      assert_response :unprocessable_entity
+      assert_equal 'invalid state', response.parsed_body['error']
+    end
+  end
+
+  def test_use_grace_expired_invalid
+    freeze_time do
+      t = issue
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'card' } }, as: :json
+      assert_response :ok
+
+      travel Ticket::GRACE_PERIOD + 1.minute
+      post "/api/tickets/#{t.barcode}/use", as: :json
+      assert_response :unprocessable_entity
+      assert_equal 'grace expired', response.parsed_body['error']
+    end
+  end
+
+  def test_use_idempotent
+    freeze_time do
+      t = issue
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'card' } }, as: :json
+      assert_response :ok
+
+      post "/api/tickets/#{t.barcode}/use", as: :json
+      assert_response :ok
+      first = response.parsed_body['used_at']
+
+      post "/api/tickets/#{t.barcode}/use", as: :json
+      assert_response :ok
+      second = response.parsed_body['used_at']
+
+      assert_equal first, second
+    end
+  end
+
+  def test_use_not_found
+    post '/api/tickets/notexists/use', as: :json
+    assert_response :not_found
+    assert_equal 'ticket not found', response.parsed_body['error']
+  end
+
+  def test_used_ticket_does_not_count_as_occupied
+    freeze_time do
+      t = issue(barcode: 'eeeeeeeeeeeeeeee', issued_at: 30.minutes.ago)
+
+      post "/api/tickets/#{t.barcode}/payments",
+           params: { payment: { payment_option: 'card' } }, as: :json
+      assert_response :ok
+
+      post "/api/tickets/#{t.barcode}/use", as: :json
+      assert_response :ok
+
+      get '/api/free-spaces', as: :json
+      assert_response :ok
+      body = response.parsed_body
+
+      assert_equal 0, body['occupied']
+      assert_equal Parking::CAPACITY, body['free_spots']
+      assert_equal Parking::CAPACITY, body['capacity']
+      assert body['as_of'].is_a?(String)
+    end
+  end
+
+  def test_cannot_issue_when_parking_full
+    with_temp_capacity(1) do
+      freeze_time do
+        post '/api/tickets', as: :json
+        assert_response :created
+
+        post '/api/tickets', as: :json
+        assert_response :unprocessable_entity
+        body = response.parsed_body
+        assert_equal 'parking full', body['error']
+      end
+    end
+  end
+
+  def test_can_issue_again_after_use_when_was_full
+    with_temp_capacity(1) do
+      freeze_time do
+        post '/api/tickets', as: :json
+        assert_response :created
+        barcode = response.parsed_body['barcode']
+
+        post "/api/tickets/#{barcode}/payments",
+             params: { payment: { payment_option: 'card' } }, as: :json
+        assert_response :ok
+
+        post "/api/tickets/#{barcode}/use", as: :json
+        assert_response :ok
+        assert_equal 'used', response.parsed_body['state']
+
+        post '/api/tickets', as: :json
+        assert_response :created
+      end
+    end
+  end
+
+  private
+
   def issue_ticket(barcode: 'deadbeefdeadbeef', issued_at: 65.minutes.ago)
     Ticket.create!(barcode:, issued_at:)
+  end
+
+  def issue(barcode: 'abcdabcdabcdabcd', issued_at: 70.minutes.ago)
+    Ticket.create!(barcode:, issued_at:)
+  end
+
+  def with_temp_capacity(temp_capacity)
+    original_cap = Parking::CAPACITY
+
+    Parking.send(:remove_const, :CAPACITY)
+    Parking.const_set(:CAPACITY, temp_capacity)
+    yield
+  ensure
+    Parking.send(:remove_const, :CAPACITY)
+    Parking.const_set(:CAPACITY, original_cap)
   end
 end

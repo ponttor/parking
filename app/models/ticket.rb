@@ -8,6 +8,8 @@ class Ticket < ApplicationRecord
   validates :issued_at, presence: true
   validates :barcode, presence: true, uniqueness: true, format: { with: /\A[0-9a-f]{16}\z/ }
 
+  scope :occupied, -> { where.not(state: 'used') }
+
   def valid_until
     return unless paid_at
 
@@ -28,5 +30,11 @@ class Ticket < ApplicationRecord
 
   def gate_state(now: Time.current)
     paid? && now <= valid_until ? 'paid' : 'unpaid'
+  end
+
+  def self.occupied_count(lock: false)
+    rel = occupied
+    rel = rel.lock if lock
+    rel.count
   end
 end
