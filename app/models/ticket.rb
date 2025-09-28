@@ -25,4 +25,8 @@ class Ticket < ApplicationRecord
   def repay!(payment_option)
     update!(paid_at: Time.current, payment_option: payment_option)
   end
+
+  def gate_state(now: Time.current)
+    paid? && now <= valid_until ? 'paid' : 'unpaid'
+  end
 end

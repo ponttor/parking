@@ -36,6 +36,14 @@ class Api::TicketsController < ApplicationController
     render json: { error: 'ticket not found' }, status: :not_found
   end
 
+  def state
+    ticket = Ticket.find_by!(barcode: params[:barcode])
+
+    render json: { state: ticket.gate_state(now: Time.current) }, status: :ok
+  rescue ActiveRecord::RecordNotFound
+    render json: { error: 'ticket not found' }, status: :not_found
+  end
+
   private
 
   def pay_params

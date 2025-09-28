@@ -3,6 +3,8 @@
 require 'test_helper'
 
 class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
+  include ActiveSupport::Testing::TimeHelpers
+
   def test_creates_ticket_and_returns_json
     freeze_time do
       post '/api/tickets', as: :json
@@ -172,6 +174,50 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
       assert_equal 'invalid state', body['error']
       assert_equal 'paid', body['state']
     end
+  end
+
+  def test_unpaid_ticket_returns_unpaid
+    freeze_time do
+      t = Ticket.create!(barcode: 'aaaaaaaaaaaaaaaa', issued_at: 10.minutes.ago)
+      get "/api/tickets/#{t.barcode}/state", as: :json
+      assert_response :ok
+      assert_equal 'unpaid', response.parsed_body['state']
+    end
+  end
+
+  def test_paid_within_15_minutes_returns_paid
+    freeze_time do
+      t = Ticket.create!(barcode: 'bbbbbbbbbbbbbbbb', issued_at: 70.minutes.ago)
+      # оплатили сейчас
+      post "/api/tickets/#{t.barcode}/payments",
+           params: { payment: { payment_option: 'card' } }, as: :json
+      assert_response :ok
+
+      travel 10.minutes
+      get "/api/tickets/#{t.barcode}/state", as: :json
+      assert_response :ok
+      assert_equal 'paid', response.parsed_body['state']
+    end
+  end
+
+  def test_paid_after_15_minutes_returns_unpaid
+    freeze_time do
+      t = Ticket.create!(barcode: 'cccccccccccccccc', issued_at: 70.minutes.ago)
+      post "/api/tickets/#{t.barcode}/payments",
+           params: { payment: { payment_option: 'cash' } }, as: :json
+      assert_response :ok
+
+      travel Ticket::GRACE_PERIOD + 1.minute
+      get "/api/tickets/#{t.barcode}/state", as: :json
+      assert_response :ok
+      assert_equal 'unpaid', response.parsed_body['state']
+    end
+  end
+
+  def test_state_not_found
+    get '/api/tickets/notexists/state', as: :json
+    assert_response :not_found
+    assert_equal 'ticket not found', response.parsed_body['error']
   end
 
   def issue_ticket(barcode: 'deadbeefdeadbeef', issued_at: 65.minutes.ago)
