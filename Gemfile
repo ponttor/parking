@@ -21,6 +21,7 @@ gem 'jbuilder'
 # Use Redis adapter to run Action Cable in production
 # gem "redis", ">= 4.0.1"
 
+gem 'aasm'
 gem 'active_model_serializers', '~> 0.10.0'
 
 # Use Kredis to get higher-level data types in Redis [https://github.com/rails/kredis]

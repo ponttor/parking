@@ -12,7 +12,6 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
       assert_equal %w[barcode issued_at].sort, body.keys.sort
       assert_match(/\A[0-9a-f]{16}\z/, body['barcode'])
       assert_equal Time.current.iso8601, body['issued_at']
-
       assert Ticket.exists?(barcode: body['barcode'])
     end
   end
@@ -25,8 +24,8 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :unprocessable_entity
-    body = response.parsed_body
 
+    body = response.parsed_body
     assert body['errors'].is_a?(Hash)
     assert_includes body['errors'].keys, 'barcode'
     assert_includes body['errors'].keys, 'issued_at'
@@ -42,6 +41,7 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :unprocessable_entity
+
     body = response.parsed_body
     assert body['errors'].is_a?(Hash)
     assert_includes body['errors'].keys, 'barcode'
@@ -70,8 +70,8 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
 
       get "/api/tickets/#{ticket.barcode}", as: :json
       assert_response :ok
-      body = response.parsed_body
 
+      body = response.parsed_body
       assert_equal 1, body['hours_started']
       assert_equal TicketPriceService::RATE_EUR, body['price']
     end
@@ -83,5 +83,98 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
 
     body = response.parsed_body
     assert_equal 'ticket not found', body['error']
+  end
+
+  def test_pay_unpaid_success
+    freeze_time do
+      t = issue_ticket
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'card' } }, as: :json
+
+      assert_response :ok
+      body = response.parsed_body
+
+      assert_equal t.barcode, body['barcode']
+      assert_equal 'paid', body['state']
+      assert_equal 'card', body['payment_option']
+      assert_equal TicketPriceService::RATE_EUR * 2, body['price']
+
+      expect_paid_at = Time.current.utc.iso8601(0)
+      expect_valid   = (Time.current + Ticket::GRACE_PERIOD).utc.iso8601(0)
+
+      assert_equal expect_paid_at, body['paid_at']
+      assert_equal expect_valid, body['valid_until']
+    end
+  end
+
+  def test_pay_twice_is_invalid_state
+    freeze_time do
+      t = issue_ticket
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'cash' } }, as: :json
+      assert_response :ok
+
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'cash' } }, as: :json
+      assert_response :unprocessable_entity
+
+      body = response.parsed_body
+      assert_equal 'invalid state', body['error']
+      assert_equal 'paid', body['state']
+    end
+  end
+
+  def test_pay_not_found
+    post '/api/tickets/notexists/payments', params: { payment: { payment_option: 'card' } }, as: :json
+    assert_response :not_found
+
+    body = response.parsed_body
+    assert_equal 'ticket not found', body['error']
+  end
+
+  def test_repay_after_grace_period_success
+    freeze_time do
+      t = issue_ticket
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'cash' } }, as: :json
+      assert_response :ok
+
+      Time.current
+
+      travel Ticket::GRACE_PERIOD + 1.minute
+
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'card' } }, as: :json
+      assert_response :ok
+
+      body = response.parsed_body
+
+      assert_equal t.barcode, body['barcode']
+      assert_equal 'paid', body['state']
+      assert_equal 'card', body['payment_option']
+
+      expect_paid_at = Time.current.utc.iso8601(0)
+      expect_valid   = (Time.current + Ticket::GRACE_PERIOD).utc.iso8601(0)
+      assert_equal expect_paid_at, body['paid_at']
+      assert_equal expect_valid,   body['valid_until']
+
+      assert_equal TicketPriceService::RATE_EUR * 1, body['price']
+    end
+  end
+
+  def test_repay_within_grace_period_is_invalid_state
+    freeze_time do
+      t = issue_ticket
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'cash' } }, as: :json
+      assert_response :ok
+
+      travel 10.minutes
+
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'cash' } }, as: :json
+      assert_response :unprocessable_entity
+
+      body = response.parsed_body
+      assert_equal 'invalid state', body['error']
+      assert_equal 'paid', body['state']
+    end
+  end
+
+  def issue_ticket(barcode: 'deadbeefdeadbeef', issued_at: 65.minutes.ago)
+    Ticket.create!(barcode:, issued_at:)
   end
 end
