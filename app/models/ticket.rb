@@ -5,10 +5,12 @@ class Ticket < ApplicationRecord
 
   GRACE_PERIOD = 15.minutes
 
+  has_one :parking_slot, dependent: :nullify
+
   validates :issued_at, presence: true
   validates :barcode, presence: true, uniqueness: true, format: { with: /\A[0-9a-f]{16}\z/ }
 
-  scope :occupied, -> { where.not(state: 'used') }
+  after_commit :release_slot_if_used, on: :update
 
   def valid_until
     return unless paid_at
@@ -16,12 +18,12 @@ class Ticket < ApplicationRecord
     paid_at + GRACE_PERIOD
   end
 
-  def payment_grace_expired?
-    paid? && paid_at.present? && paid_at < GRACE_PERIOD.ago
+  def payment_grace_expired?(now)
+    paid? && paid_at.present? && paid_at < now - GRACE_PERIOD
   end
 
   def can_take_payment?
-    !paid? || payment_grace_expired?
+    !paid? || payment_grace_expired?(Time.current)
   end
 
   def repay!(payment_option)
@@ -32,9 +34,13 @@ class Ticket < ApplicationRecord
     paid? && now <= valid_until ? 'paid' : 'unpaid'
   end
 
-  def self.occupied_count(lock: false)
-    rel = occupied
-    rel = rel.lock if lock
-    rel.count
+  private
+
+  def release_slot_if_used
+    return unless saved_change_to_state? && used?
+
+    if (slot = ParkingSlot.find_by(ticket_id: id))
+      slot.update!(ticket_id: nil)
+    end
   end
 end

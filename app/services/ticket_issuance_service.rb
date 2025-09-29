@@ -3,18 +3,21 @@
 class TicketIssuanceService
   class ParkingFullError < StandardError; end
 
-  class << self
-    def call
-      Ticket.transaction do
-        occupied = Ticket.occupied.lock.count
-        capacity = Parking::CAPACITY
-        raise ParkingFullError if occupied >= capacity
+  def self.call
+    ActiveRecord::Base.transaction(requires_new: true) do
+      slot = ParkingSlot.free
+                        .lock('FOR UPDATE SKIP LOCKED')
+                        .first
+      raise ParkingFullError, 'no capacity' unless slot
 
-        ticket = TicketService.create
-        ticket.save!
+      ticket = Ticket.new(
+        barcode: SecureRandom.hex(8),
+        issued_at: Time.current
+      )
+      ticket.save! unless ticket.persisted?
 
-        ticket
-      end
+      slot.update!(ticket_id: ticket.id)
+      ticket
     end
   end
 end

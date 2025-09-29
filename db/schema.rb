@@ -10,7 +10,15 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_09_28_114519) do
+ActiveRecord::Schema[7.2].define(version: 2025_09_29_104303) do
+  create_table "parking_slots", force: :cascade do |t|
+    t.integer "ticket_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["ticket_id"], name: "index_parking_slots_on_ticket_id_free", where: "ticket_id IS NULL"
+    t.index ["ticket_id"], name: "index_parking_slots_on_ticket_id_taken_unique", unique: true, where: "ticket_id IS NOT NULL"
+  end
+
   create_table "tickets", force: :cascade do |t|
     t.string "barcode", limit: 16, null: false
     t.datetime "issued_at", null: false
@@ -25,4 +33,6 @@ ActiveRecord::Schema[7.2].define(version: 2025_09_28_114519) do
     t.index ["state"], name: "index_tickets_on_state"
     t.index ["used_at"], name: "index_tickets_on_used_at"
   end
+
+  add_foreign_key "parking_slots", "tickets", on_delete: :nullify
 end

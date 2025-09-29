@@ -8,6 +8,8 @@ module ApiErrorHandling
     rescue_from ActiveRecord::RecordNotFound,            with: :render_not_found
     rescue_from ActiveRecord::RecordInvalid,             with: :render_unprocessable
     rescue_from TicketIssuanceService::ParkingFullError, with: :render_parking_full
+
+    rescue_from AASM::InvalidTransition, with: :render_invalid_transition if defined?(AASM)
   end
 
   private
@@ -22,5 +24,9 @@ module ApiErrorHandling
 
   def render_parking_full(_error)
     render json: { error: 'parking full' }, status: :unprocessable_entity
+  end
+
+  def render_invalid_transition(error)
+    render json: { error: 'invalid state', details: error.message }, status: :unprocessable_entity
   end
 end

@@ -2,25 +2,42 @@
 
 class Api::TicketsController < ApplicationController
   def show
-    ticket = Ticket.find_by!(barcode: params[:barcode])
-    render json: ticket, serializer: TicketPriceSerializer, status: :ok
+    render json: ticket,
+           serializer: TicketPriceSerializer,
+           now: Time.current,
+           status: :ok
   end
 
   def create
     ticket = TicketIssuanceService.call
-    render json: ticket, serializer: TicketSerializer, status: :created
+
+    render json: ticket,
+           serializer: TicketSerializer,
+           status: :created
   end
 
   def payments
-    ticket = Ticket.find_by!(barcode: params[:barcode])
-    return render json: { error: 'invalid state', state: ticket.state }, status: :unprocessable_entity unless ticket.can_take_payment?
+    unless ticket.can_take_payment?
+      return render json: { error: 'invalid state', state: ticket.state }, status: :unprocessable_entity
+    end
 
-    result = process_payment!(ticket, pay_params[:payment_option])
-    render json: ticket, serializer: TicketPaymentSerializer, charged_price: result[:charged_price], status: :ok
+    now = Time.current
+    option = pay_params[:payment_option]
+    price = TicketPriceService.call(ticket, now)[:price_eur]
+
+    Ticket.transaction do
+      ticket.lock!
+
+      ticket.payment_grace_expired?(now) ? ticket.repay!(option) : ticket.pay!(option)
+
+      render json: ticket,
+             serializer: TicketPaymentSerializer,
+             charged_price: price,
+             status: :ok
+    end
   end
 
   def state
-    ticket = Ticket.find_by!(barcode: params[:barcode])
     render json: { state: ticket.gate_state(now: Time.current) }, status: :ok
   end
 
@@ -31,9 +48,12 @@ class Api::TicketsController < ApplicationController
     return render json: { error: 'invalid state', state: ticket.state }, status: :unprocessable_entity unless ticket.paid?
     return render json: { error: 'grace expired', state: ticket.state }, status: :unprocessable_entity if Time.current > ticket.valid_until
 
-    ticket.use!
+    Ticket.transaction do
+      ticket.lock!
+      ticket.use!
 
-    render json: ticket, serializer: TicketUseSerializer, status: :ok
+      render json: ticket, serializer: TicketUseSerializer, status: :ok
+    end
   end
 
   private
@@ -42,11 +62,7 @@ class Api::TicketsController < ApplicationController
     params.require(:payment).permit(:payment_option)
   end
 
-  def process_payment!(ticket, option)
-    charge = TicketPriceService.call(ticket, now: Time.current)[:price_eur]
-
-    ticket.payment_grace_expired? ? ticket.repay!(option) : ticket.pay!(option)
-
-    { charged_price: charge }
+  def ticket
+    @ticket ||= Ticket.find_by!(barcode: params[:barcode])
   end
 end

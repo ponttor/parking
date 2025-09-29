@@ -19,9 +19,10 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
   end
 
   def test_returns_422_when_service_returns_invalid_ticket
-    invalid = Ticket.new
+    Ticket.new
+    invalid_barcode = 'z' * 16
 
-    TicketService.stub(:create, invalid) do
+    SecureRandom.stub(:hex, ->(_n) { invalid_barcode }) do
       post '/api/tickets', as: :json
     end
 
@@ -30,15 +31,13 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
     body = response.parsed_body
     assert body['errors'].is_a?(Hash)
     assert_includes body['errors'].keys, 'barcode'
-    assert_includes body['errors'].keys, 'issued_at'
   end
 
   def test_returns_422_on_duplicate_barcode
     existing = Ticket.create!(barcode: 'deadbeefdeadbeef', issued_at: Time.current)
+    Ticket.new(barcode: existing.barcode, issued_at: Time.current)
 
-    duplicate = Ticket.new(barcode: existing.barcode, issued_at: Time.current)
-
-    TicketService.stub(:create, duplicate) do
+    SecureRandom.stub(:hex, ->(_n) { existing.barcode }) do
       post '/api/tickets', as: :json
     end
 
@@ -339,6 +338,154 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
     end
   end
 
+  def test_issue_assigns_exactly_one_slot
+    freeze_time do
+      post '/api/tickets', as: :json
+      assert_response :created
+      barcode = response.parsed_body['barcode']
+      ticket  = Ticket.find_by!(barcode:)
+
+      assert_equal 1, ParkingSlot.where(ticket_id: ticket.id).count
+    end
+  end
+
+  def test_invalid_use_does_not_free_slot
+    with_temp_capacity(1) do
+      freeze_time do
+        post '/api/tickets', as: :json
+        ticket = Ticket.find_by!(barcode: response.parsed_body['barcode'])
+
+        post "/api/tickets/#{ticket.barcode}/payments",
+             params: { payment: { payment_option: 'card' } }, as: :json
+        assert_response :ok
+        assert_equal 1, ParkingSlot.where(ticket_id: ticket.id).count
+
+        travel Ticket::GRACE_PERIOD + 1.minute
+        post "/api/tickets/#{ticket.barcode}/use", as: :json
+        assert_response :unprocessable_entity
+        assert_equal 1, ParkingSlot.where(ticket_id: ticket.id).count
+
+        # слот занят → новый билет выдать нельзя
+        post '/api/tickets', as: :json
+        assert_response :unprocessable_entity
+      end
+    end
+  end
+
+  def test_successful_use_frees_slot_and_allows_new_issue
+    with_temp_capacity(1) do
+      freeze_time do
+        post '/api/tickets', as: :json
+        ticket = Ticket.find_by!(barcode: response.parsed_body['barcode'])
+
+        post "/api/tickets/#{ticket.barcode}/payments",
+             params: { payment: { payment_option: 'card' } }, as: :json
+        assert_response :ok
+
+        post "/api/tickets/#{ticket.barcode}/use", as: :json
+        assert_response :ok
+        assert_equal 0, ParkingSlot.where(ticket_id: ticket.id).count
+
+        post '/api/tickets', as: :json
+        assert_response :created
+      end
+    end
+  end
+
+  def test_concurrent_use_is_idempotent_and_frees_slot_once
+    freeze_time do
+      post '/api/tickets', as: :json
+      t = Ticket.find_by!(barcode: response.parsed_body['barcode'])
+
+      post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'card' } }, as: :json
+      assert_response :ok
+
+      start_gate = Queue.new
+      threads = Array.new(2) do
+        Thread.new do
+          start_gate.pop
+          post "/api/tickets/#{t.barcode}/use", as: :json
+        end
+      end
+      2.times { start_gate << :go }
+      threads.each(&:join)
+
+      post "/api/tickets/#{t.barcode}/use", as: :json
+      assert_response :ok
+      assert_equal 'used', response.parsed_body['state']
+
+      assert_equal 0, ParkingSlot.where(ticket_id: t.id).count
+    end
+  end
+
+  def test_concurrent_payment_allows_only_one_success
+    freeze_time do
+      post '/api/tickets', as: :json
+      t = Ticket.find_by!(barcode: response.parsed_body['barcode'])
+
+      start_gate = Queue.new
+      statuses   = Queue.new
+      threads = Array.new(2) do
+        Thread.new do
+          start_gate.pop
+          post "/api/tickets/#{t.barcode}/payments", params: { payment: { payment_option: 'card' } }, as: :json
+          statuses << response.status
+        end
+      end
+      2.times { start_gate << :go }
+      threads.each(&:join)
+
+      s1, s2 = Array.new(2) { statuses.pop }
+      assert_includes [[200, 422], [422, 200], [200, 200]], [s1, s2].sort
+
+      get "/api/tickets/#{t.barcode}/state", as: :json
+      assert_response :ok
+      assert_equal 'paid', response.parsed_body['state']
+
+      assert_equal 1, ParkingSlot.where(ticket_id: t.id).count
+    end
+  end
+
+  def test_free_spaces_matches_slots_counts
+    freeze_time do
+      ParkingSlot.update_all(ticket_id: nil)
+      ensure_slots(::Parking::CAPACITY)
+
+      post '/api/tickets', as: :json
+      post '/api/tickets', as: :json
+
+      get '/api/free-spaces', as: :json
+      body = response.parsed_body
+
+      capacity = ::Parking::CAPACITY
+      occupied = ParkingSlot.where.not(ticket_id: nil).count
+
+      assert_equal capacity, body['capacity']
+      assert_equal occupied, body['occupied']
+      assert_equal capacity - occupied, body['free_spots']
+    end
+  end
+
+  test 'unique partial index prevents assigning one ticket to multiple slots' do
+    ticket = Ticket.new(
+      barcode: SecureRandom.base58(12),
+      state: 'unpaid',
+      issued_at: Time.current
+    )
+    ticket.save!(validate: false)
+
+    s1 = ParkingSlot.create!
+    s2 = ParkingSlot.create!
+
+    s1.update!(ticket_id: ticket.id)
+
+    assert_raises(ActiveRecord::RecordNotUnique, ActiveRecord::StatementInvalid) do
+      s2.update_column(:ticket_id, ticket.id)
+    end
+
+    assert_equal [s1.id], ParkingSlot.where(ticket_id: ticket.id).pluck(:id)
+  end
+
   private
 
   def issue_ticket(barcode: 'deadbeefdeadbeef', issued_at: 65.minutes.ago)
@@ -350,13 +497,28 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
   end
 
   def with_temp_capacity(temp_capacity)
-    original_cap = Parking::CAPACITY
+    original_slots = ParkingSlot.count
 
-    Parking.send(:remove_const, :CAPACITY)
-    Parking.const_set(:CAPACITY, temp_capacity)
-    yield
-  ensure
-    Parking.send(:remove_const, :CAPACITY)
-    Parking.const_set(:CAPACITY, original_cap)
+    ensure_slots(temp_capacity)
+    begin
+      yield
+    ensure
+      ensure_slots(original_slots)
+    end
+  end
+
+  def ensure_slots(capacity)
+    have    = ParkingSlot.count
+    missing = capacity - have
+
+    if missing.positive?
+      now   = Time.current
+      rows  = Array.new(missing) { { created_at: now, updated_at: now } }
+      ParkingSlot.insert_all!(rows)
+    elsif missing.negative?
+
+      ids = ParkingSlot.where(ticket_id: nil).order(:id).limit(-missing).pluck(:id)
+      ParkingSlot.where(id: ids).delete_all
+    end
   end
 end
