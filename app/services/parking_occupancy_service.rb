@@ -2,13 +2,11 @@
 
 class ParkingOccupancyService
   class << self
-    def snapshot(now: Time.current)
+    def snapshot(now)
       capacity = ::Parking::CAPACITY
-      occupied = Ticket.occupied_count
-
+      occupied = ParkingSlot.taken.count
       free     = [capacity - occupied, 0].max
-
-      { capacity: capacity, occupied: occupied, free_spots: free, as_of: now.utc.iso8601(0) }
+      { capacity:, occupied:, free_spots: free, as_of: now.utc.iso8601(0) }
     end
   end
 end

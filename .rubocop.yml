@@ -60,3 +60,8 @@ Style/FetchEnvVar:
 
 Rails/I18nLocaleTexts:
   Enabled: false
+
+Rails/SkipsModelValidations:
+  Exclude:
+    - "db/seeds.rb"
+    - "test/**/*"

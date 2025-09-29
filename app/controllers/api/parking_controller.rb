@@ -2,7 +2,7 @@
 
 class Api::ParkingController < ApplicationController
   def free_spaces
-    snapshot = ParkingOccupancyService.snapshot
+    snapshot = ParkingOccupancyService.snapshot(Time.current)
     render json: snapshot, status: :ok
   end
 end

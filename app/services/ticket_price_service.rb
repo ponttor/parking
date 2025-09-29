@@ -4,7 +4,7 @@ class TicketPriceService
   RATE_EUR        = 2
   SECONDS_IN_HOUR = 3600.0
   class << self
-    def call(ticket, now: Time.current)
+    def call(ticket, now)
       return { hours_started: 0, price_eur: 0 } if ticket.paid? && now <= ticket.valid_until
 
       start_time = ticket.paid? ? ticket.paid_at : ticket.issued_at

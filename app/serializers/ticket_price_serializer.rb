@@ -18,6 +18,6 @@ class TicketPriceSerializer < ActiveModel::Serializer
   private
 
   def price_calculation
-    @price_calculation ||= TicketPriceService.call(object)
+    @price_calculation ||= TicketPriceService.call(object, instance_options[:now])
   end
 end

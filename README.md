@@ -16,6 +16,7 @@ git clone <repo>
 cd <repo>
 bundle install
 bin/rails db:create db:migrate
+bin/rails db:seed
 bin/rails s
 ```
 
@@ -151,3 +152,16 @@ Example response:
   "as_of": "2025-09-28T09:06:11Z"
 }
 ```
+
+Each physical parking place is represented by a row in the parking_slots table.
+A total of Parking::CAPACITY slots are created (default: 54).
+Each slot has a foreign key ticket_id.
+
+When a new ticket is issued (POST /api/tickets), the issuance service atomically assigns a free slot to that ticket.
+When a ticket is used (POST /api/tickets/:barcode/use), the slot is released (ticket_id is set back to NULL).
+A unique partial index on parking_slots.ticket_id ensures that a ticket can never occupy more than one slot.
+
+This means:
+capacity = total number of slots,
+occupied = count of slots with a non-null ticket_id,
+free_spots = count of slots without a ticket.
