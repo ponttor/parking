@@ -1,4 +1,3 @@
-# app/controllers/concerns/api_error_handling.rb
 # frozen_string_literal: true
 
 module ApiErrorHandling
