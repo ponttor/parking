@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_09_29_104303) do
+ActiveRecord::Schema[7.2].define(version: 2025_09_29_104404) do
   create_table "parking_slots", force: :cascade do |t|
     t.integer "ticket_id"
     t.datetime "created_at", null: false
