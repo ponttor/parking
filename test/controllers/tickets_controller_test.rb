@@ -297,8 +297,8 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
       body = response.parsed_body
 
       assert_equal 0, body['occupied']
-      assert_equal Parking::CAPACITY, body['free_spots']
-      assert_equal Parking::CAPACITY, body['capacity']
+      assert_equal ParkingSlot.count, body['free_spots']
+      assert_equal ParkingSlot.count, body['capacity']
       assert body['as_of'].is_a?(String)
     end
   end
@@ -449,7 +449,7 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
   def test_free_spaces_matches_slots_counts
     freeze_time do
       ParkingSlot.update_all(ticket_id: nil)
-      ensure_slots(::Parking::CAPACITY)
+      ensure_slots(ParkingSlot.count)
 
       post '/api/tickets', as: :json
       post '/api/tickets', as: :json
@@ -457,7 +457,7 @@ class ApiTicketsCreateTest < ActionDispatch::IntegrationTest
       get '/api/free-spaces', as: :json
       body = response.parsed_body
 
-      capacity = ::Parking::CAPACITY
+      capacity = ParkingSlot.count
       occupied = ParkingSlot.where.not(ticket_id: nil).count
 
       assert_equal capacity, body['capacity']

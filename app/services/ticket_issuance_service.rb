@@ -14,7 +14,7 @@ class TicketIssuanceService
         barcode: SecureRandom.hex(8),
         issued_at: Time.current
       )
-      ticket.save! unless ticket.persisted?
+      ticket.save!
 
       slot.update!(ticket_id: ticket.id)
       ticket

@@ -3,7 +3,7 @@
 class ParkingOccupancyService
   class << self
     def snapshot(now)
-      capacity = ::Parking::CAPACITY
+      capacity = ParkingSlot.count
       occupied = ParkingSlot.taken.count
       free     = [capacity - occupied, 0].max
       { capacity:, occupied:, free_spots: free, as_of: now.utc.iso8601(0) }

@@ -42,11 +42,9 @@ class Api::TicketsController < ApplicationController
   end
 
   def use
-    ticket = Ticket.find_by!(barcode: params[:barcode])
-
     return render json: ticket, serializer: TicketUseSerializer, status: :ok if ticket.used?
     return render json: { error: 'invalid state', state: ticket.state }, status: :unprocessable_entity unless ticket.paid?
-    return render json: { error: 'grace expired', state: ticket.state }, status: :unprocessable_entity if Time.current > ticket.valid_until
+    return render json: { error: 'grace expired', state: ticket.gate_state(now: Time.current) }, status: :unprocessable_entity if Time.current > ticket.valid_until
 
     Ticket.transaction do
       ticket.lock!
